@@ -20,7 +20,16 @@ if config.config_file_name is not None:
 # target_metadata = mymodel.Base.metadata
 import os
 from sqlmodel import SQLModel
-from app.models import Set, PlayerCard, BreachMage, Nemesis
+from app.models import (
+    Set,
+    PlayerCard,
+    BreachMage,
+    Nemesis,
+    Expedition,
+    ExpeditionBattle,
+    ExpeditionMage,
+    ExpeditionPlayerCard,
+    ExpeditionSet)
 
 config.set_main_option('sqlalchemy.url', os.environ.get('DATABASE_URL'))
 
