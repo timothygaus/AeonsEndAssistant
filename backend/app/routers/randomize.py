@@ -6,6 +6,7 @@ from sqlmodel import SQLModel, Session, select
 
 from app.database import get_session
 from app.models import BreachMage, Expedition, ExpeditionBattle, ExpeditionMage, ExpeditionPlayerCard, ExpeditionSet, Nemesis, PlayerCard, Set
+from app.enums import CardType
 
 router = APIRouter()
 
@@ -24,7 +25,7 @@ def create_expedition(data: ExpeditionCreate, session: Session = Depends(get_ses
     for set_id in data.set_ids:
         session.add(ExpeditionSet(expedition_id=expedition.id, set_id=set_id))
 
-    def draw_supply(card_type: str, count: int):
+    def draw_supply(card_type: CardType, count: int):
         pool = session.exec(
             select(PlayerCard).where(
                 PlayerCard.type == card_type,
@@ -42,9 +43,9 @@ def create_expedition(data: ExpeditionCreate, session: Session = Depends(get_ses
             ))
 
     # Seeding the initial supply cards
-    draw_supply('gem', 3)
-    draw_supply('relic', 2)
-    draw_supply('spell', 4)
+    draw_supply(CardType.GEM, 3)
+    draw_supply(CardType.RELIC, 2)
+    draw_supply(CardType.SPELL, 4)
 
     mage_pool = session.exec(
         select(BreachMage).where(BreachMage.set_id.in_(data.set_ids))

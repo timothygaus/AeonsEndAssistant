@@ -1,6 +1,7 @@
 from typing import Optional
 from sqlmodel import SQLModel
 from app.models import PlayerCard, BreachMage, Nemesis, Expedition, ExpeditionBattle
+from app.enums import LossRandomizerType
 
 class BattleDetail(SQLModel):
     battle_number: int
@@ -13,3 +14,7 @@ class ExpeditionStateResponse(SQLModel):
     banished_cards: list[PlayerCard]
     mages: list[BreachMage]
     battles: list[BattleDetail]
+
+class ResolveBattleRequest(SQLModel):
+    won_battle: bool
+    loss_randomizer_type: Optional[LossRandomizerType] = None

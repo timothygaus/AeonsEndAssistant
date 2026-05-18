@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 from typing import Optional
 from sqlmodel import Field, SQLModel
 
+from app.enums import CardType
+
 class Set(SQLModel, table=True):
     __tablename__ = 'sets'
 
@@ -13,7 +15,7 @@ class PlayerCard(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
-    type: str
+    type: CardType
     is_supply: bool
     set_id: int = Field(foreign_key='sets.id')
 

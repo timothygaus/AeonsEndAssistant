@@ -45,3 +45,6 @@ def get_expedition_by_id(id: int, session: Session = Depends(get_session)):
         mages=mages,
         battles=battle_details
     )
+
+# @router.post('/expeditions/{id}/resolve-battle')
+# def resolve_battle(result: str, randomizer_on_loss: str, session: Session = Depends(get_session)):
