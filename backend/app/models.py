@@ -42,7 +42,7 @@ class Expedition(SQLModel, table=True):
     status: str = 'active'
     current_battle: int = 1
     variant: str = 'standard'
-    created_at: datetime = Field(default_factory=datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class ExpeditionSet(SQLModel, table=True):
     __tablename__ = 'expedition_sets'
@@ -57,6 +57,7 @@ class ExpeditionPlayerCard(SQLModel, table=True):
     expedition_id: int = Field(foreign_key='expeditions.id')
     player_card_id: int = Field(foreign_key='player_cards.id')
     status: str # 'barracks', 'banished'
+
 class ExpeditionMage(SQLModel, table=True):
     __tablename__ = 'expedition_mages'
 
