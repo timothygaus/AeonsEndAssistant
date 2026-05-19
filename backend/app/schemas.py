@@ -1,7 +1,14 @@
 from typing import Optional
+
 from sqlmodel import SQLModel
-from app.models import PlayerCard, BreachMage, Nemesis, Expedition, ExpeditionBattle
-from app.enums import LossRandomizerType
+
+from app.enums import ExpeditionVariant, LossRandomizerType
+from app.models import BreachMage, Expedition, Nemesis, PlayerCard
+
+class ExpeditionCreate(SQLModel):
+    name: Optional[str] = None
+    set_ids: list[int]
+    variant: ExpeditionVariant = ExpeditionVariant.STANDARD
 
 class BattleDetail(SQLModel):
     battle_number: int

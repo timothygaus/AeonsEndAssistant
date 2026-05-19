@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from sqlmodel import Session, select
+from sqlmodel import select, Session
 
 from app.database import get_session
 from app.models import Set

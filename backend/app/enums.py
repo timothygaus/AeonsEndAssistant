@@ -11,3 +11,17 @@ class LossRandomizerType(str, Enum):
     SPELL = 'spell'
     MAGE = 'mage'
     TREASURE = 'treasure'
+
+class SupplyCardStatus(str, Enum):
+    BARRACKS = 'barracks'
+    BANISHED = 'banished'
+
+class ExpeditionVariant(str, Enum):
+    STANDARD = 'standard'
+    SHORT = 'short'
+    EXTENDED = 'extended'
+    DEEP_POCKETS = 'deep-pockets'
+
+class ExpeditionStatus(str, Enum):
+    ACTIVE = 'active'
+    COMPLETE = 'complete'

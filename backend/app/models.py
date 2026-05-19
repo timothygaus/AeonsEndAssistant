@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from sqlmodel import Field, SQLModel
 
-from app.enums import CardType
+from app.enums import CardType, ExpeditionStatus, ExpeditionVariant, SupplyCardStatus
 
 class Set(SQLModel, table=True):
     __tablename__ = 'sets'
@@ -41,9 +41,9 @@ class Expedition(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     name: Optional[str] = None
-    status: str = 'active'
+    status: ExpeditionStatus = ExpeditionStatus.ACTIVE
     current_battle: int = 1
-    variant: str = 'standard'
+    variant: ExpeditionVariant = ExpeditionVariant.STANDARD
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class ExpeditionSet(SQLModel, table=True):
@@ -58,7 +58,7 @@ class ExpeditionPlayerCard(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     expedition_id: int = Field(foreign_key='expeditions.id')
     player_card_id: int = Field(foreign_key='player_cards.id')
-    status: str # 'barracks', 'banished'
+    status: SupplyCardStatus
 
 class ExpeditionMage(SQLModel, table=True):
     __tablename__ = 'expedition_mages'
