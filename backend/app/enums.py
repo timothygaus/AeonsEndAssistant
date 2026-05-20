@@ -25,3 +25,7 @@ class ExpeditionVariant(str, Enum):
 class ExpeditionStatus(str, Enum):
     ACTIVE = 'active'
     COMPLETE = 'complete'
+
+class BattleResult(str, Enum):
+    WIN = 'win'
+    LOSS = 'loss'
