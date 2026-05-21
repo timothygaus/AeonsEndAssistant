@@ -24,3 +24,4 @@ def add_user_set(user_sets: list[int], session: Session = Depends(get_session)):
     for set_id in user_sets:
         session.add(UserSet(set_id=set_id))
     session.commit()
+    return user_sets

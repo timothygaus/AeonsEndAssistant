@@ -25,3 +25,8 @@ class ExpeditionStateResponse(SQLModel):
 class ResolveBattleRequest(SQLModel):
     won_battle: bool
     loss_randomizer_type: Optional[LossRandomizerType] = None
+
+class QuickplayResponse(SQLModel):
+    player_cards: list[PlayerCard]
+    mages: list[BreachMage]
+    nemesis: Nemesis
