@@ -75,3 +75,9 @@ class ExpeditionBattle(SQLModel, table=True):
     battle_number: int
     nemesis_id: int = Field(foreign_key='nemeses.id')
     result: Optional[str]
+
+class UserSet(SQLModel, table=True):
+    __tablename__ = 'user_sets'
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    set_id: int
