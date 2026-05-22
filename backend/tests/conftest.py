@@ -1,3 +1,5 @@
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import create_engine, Session, SQLModel
@@ -7,11 +9,11 @@ from app.database import get_session
 from app.models import BreachMage, Nemesis, PlayerCard, Set
 from app.enums import CardType
 
-TEST_DATABASE_URL = 'postgresql://postgres:postgres@db:5432/aeonsend_test'
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/aeonsend_test")
 
 @pytest.fixture(scope='session')
 def engine():
-    test_engine = create_engine(TEST_DATABASE_URL)
+    test_engine = create_engine(DATABASE_URL)
     SQLModel.metadata.create_all(test_engine)
     yield test_engine
     SQLModel.metadata.drop_all(test_engine)
