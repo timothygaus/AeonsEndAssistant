@@ -12,7 +12,7 @@ jobs:
 
         services:
             db:
-                image: postgres15
+                image: postgres:15
                 env:
                     POSTGRES_USER: postgres
                     POSTGRES_PASSWORD: postgres
