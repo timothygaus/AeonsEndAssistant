@@ -14,3 +14,6 @@ export const updateUserSets = (setIds: number[]) =>
         },
         body: JSON.stringify(setIds)
     }).then(res => res.json())
+
+export const getQuickplay = (numMages: number) =>
+    fetch(`${BASE_URL}/quickplay?num_mages=${numMages}`).then(res => res.json())
