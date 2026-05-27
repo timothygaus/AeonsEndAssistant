@@ -45,25 +45,16 @@ function Quickplay() {
             {data?.nemesis && (
                 <div className="mt-8">
                     <h2 className="text-2xl font-bold mb-4">Results</h2>
-                    <h3 className="mt-3">
-                        Mages: {data.mages.map((mage: any) => (
-                            <p key={mage.id}>{mage.name}</p>
-                    ))}</h3>
-                    <h3 className="mt-3">
-                        Gems: {data.player_cards.filter((card: any) => card.type === 'gem').map((card: any) => (
-                            <p key={card.id}>{card.name}</p>
-                    ))}</h3>
-                    <h3 className="mt-3">
-                        Relics: {data.player_cards.filter((card: any) => card.type === 'relic').map((card: any) => (
-                            <p key={card.id}>{card.name}</p>
-                    ))}</h3>
-                    <h3 className="mt-3">
-                        Spells: {data.player_cards.filter((card: any) => card.type === 'spell').map((card: any) => (
-                            <p key={card.id}>{card.name}</p>
-                    ))}</h3>
-                    <h3 className="mt-3">
-                        Nemesis: {data.nemesis.name}
-                    </h3>
+                    <h3 className="mt-4 mb-2 font-semibold">Mages:</h3>
+                    {data.mages.map((mage: any) => (<p key={mage.id}>{mage.name}</p>))}
+                    <h3 className="mt-4 mb-2 font-semibold">Gems:</h3>
+                    {data.player_cards.filter((card: any) => card.type === 'gem').map((card: any) => (<p key={card.id}>{card.name}</p>))}
+                    <h3 className="mt-4 mb-2 font-semibold">Relics:</h3>
+                    {data.player_cards.filter((card: any) => card.type === 'relic').map((card: any) => (<p key={card.id}>{card.name}</p>))}
+                    <h3 className="mt-4 mb-2 font-semibold">Spells:</h3>
+                    {data.player_cards.filter((card: any) => card.type === 'spell').map((card: any) => (<p key={card.id}>{card.name}</p>))}
+                    <h3 className="mt-4 mb-2 font-semibold">Nemesis:</h3>
+                    <p>{data.nemesis.name}</p>
                 </div>
             )}
         </div>
