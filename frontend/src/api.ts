@@ -1,6 +1,6 @@
 import type { CreateExpeditionRequest } from "./types"
 
-const BASE_URL = 'http://localhost:8000'
+const BASE_URL = `http://${window.location.hostname}:8000`
 
 export const getSets = () =>
     fetch(`${BASE_URL}/sets`).then(res => res.json())
