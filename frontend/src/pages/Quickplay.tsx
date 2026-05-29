@@ -5,7 +5,7 @@ import { getQuickplay } from "../api"
 function Quickplay() {
     const [numMages, setNumMages] = useState(2)
 
-    const { data, isLoading, refetch } = useQuery<any>({
+    const { data, isLoading, refetch } = useQuery({
         queryKey: ['quickplay', numMages],
         queryFn: () => getQuickplay(numMages),
         enabled: false
@@ -14,7 +14,7 @@ function Quickplay() {
     const handleRandomize = () => {
         refetch()
     }
-    console.log('data:', data)
+
     return (
         <div className="min-h-screen bg-gray-900 text-white p-8">
             <h1 className="text-3xl font-bold mb-8">Quickplay</h1>
@@ -34,7 +34,7 @@ function Quickplay() {
 
                 <button
                     onClick={handleRandomize}
-                    className="px-6 py-3 bg-blue-300 rounded font-semibold hover:bg-blue-700"
+                    className="px-6 py-3 bg-blue-600 rounded text-lg font-semibold hover:bg-blue-700"
                 >
                     Create Game
                 </button>

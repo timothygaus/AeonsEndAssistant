@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { useQuery, useMutation } from "@tanstack/react-query"
 import { getSets, getUserSets, updateUserSets } from "../api"
+import Button from "../components/Button"
 
 function SetSelection() {
     const { data: allSets, isLoading: setsLoading } = useQuery({
@@ -50,14 +51,9 @@ function SetSelection() {
                         {set.name}
                     </label>
                 ))}
-            </div>
+            </div> 
 
-            <button
-                onClick={() => mutation.mutate(selectedIds)}
-                className="mt-6 px-4 bg-blue-600 rounded hover:bg-blue-700"
-            >
-                Save
-            </button>
+            <Button onClick={() => mutation.mutate(selectedIds)}>Save</Button>
         </div>
     )
 }

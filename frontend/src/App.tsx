@@ -5,6 +5,7 @@ import Quickplay from "./pages/Quickplay"
 import ExpeditionMode from "./pages/ExpeditionMode"
 import ExpeditionView from "./pages/ExpeditionView"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import NewExpedition from "./pages/NewExpedition"
 
 const queryClient = new QueryClient()
 
@@ -18,6 +19,7 @@ function App() {
           <Route path='/quickplay' element={<Quickplay />} />
           <Route path='/expedition' element={<ExpeditionMode />} />
           <Route path='/expedition/:id' element={<ExpeditionView />} />
+          <Route path='/expedition/new' element={<NewExpedition />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>
