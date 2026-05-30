@@ -2,26 +2,26 @@
 
 A web application that assists with card randomization for the [Aeon's End](https://www.boardgamegeek.com/boardgame/191189/aeons-end) series of board games. Handles both single-game randomization and full expedition mode, including persistent barracks management across battles.
 
-> **Status:** Backend complete. Frontend in progress.
-
 ---
 
 ## What It Does
 
 Aeon's End involves randomizing a player supply of gems, relics, and spells, selecting breach mages, and drawing a nemesis at the start of each game. With 9 waves of content, the sheer volume of randomizer cards makes setup tedious. This app automates that process.
 
-**Single game:** Randomly select a supply, mages, and nemesis from your owned sets.
+**Single game (Quickplay):** Randomly select a supply, mages, and nemesis from your owned sets.
 
 **Expedition mode:** Manage a persistent campaign across multiple battles. The app tracks your barracks (available cards and mages), handles post-battle randomizer draws, and enforces banishing rules between fights. Supports Standard, Short, Extended, and Big Pockets variants.
 
-Card data is sourced from the [Aeon's End wiki](https://aeonsend.wiki.gg) via its MediaWiki API.
+Card data is sourced from the [Aeon's End wiki](https://aeonsend.wiki.gg) via its MediaWiki API, scraped once at setup and cached locally — the wiki is not queried at runtime.
 
 ---
 
 ## Tech Stack
 
-- **Backend:** Python, FastAPI, SQLModel, PostgreSQL, Alembic
-- **Infrastructure:** Docker, Docker Compose
+- **Frontend:** React 19, TypeScript, Vite, React Router, TanStack Query, Tailwind CSS
+- **Backend:** Python, FastAPI, SQLModel, PostgreSQL 15, Alembic
+- **Infrastructure:** Docker, Docker Compose, AWS EC2
+- **CI/CD:** GitHub Actions (tests on PR, deploy to EC2 on merge to main)
 - **Data Ingestion:** Python, MediaWiki API, mwparserfromhell
 
 ---
@@ -64,9 +64,10 @@ Pulls card data from the Aeon's End wiki. Takes several minutes on first run due
 docker-compose exec api python -u -m ingestion.seed
 ```
 
-**6. Verify the API is running**
+**6. Open the app**
 
-Visit `http://localhost:8000/docs` to explore the API via Swagger UI.
+- Frontend: `http://localhost:5173`
+- API (Swagger UI): `http://localhost:8000/docs`
 
 ---
 
@@ -85,6 +86,13 @@ A convenience script is included to wipe and recreate the database from scratch:
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/sets` | List all available sets |
+| GET | `/sets/saved` | Get the user's saved set preferences |
+| PUT | `/sets/saved` | Update the user's owned sets |
+
+### Quickplay
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/quickplay` | Generate a single-game randomization (`?num_mages=N`) |
 
 ### Expeditions
 | Method | Endpoint | Description |
@@ -93,7 +101,7 @@ A convenience script is included to wipe and recreate the database from scratch:
 | POST | `/expeditions` | Create a new expedition and draw the initial barracks |
 | GET | `/expeditions/{id}` | Get full expedition state (barracks, mages, battles) |
 | POST | `/expeditions/{id}/resolve-battle` | Record a win or loss and draw new randomizers |
-| POST | `/expeditions/{id}/select-supply` | Select the 9 supply cards for the next fight, banishing the rest |
+| POST | `/expeditions/{id}/lock-supply` | Banish cards not selected for the next battle |
 | DELETE | `/expeditions/{id}` | Delete an expedition |
 
 ### Creating an expedition
@@ -124,12 +132,26 @@ AeonsEndAssistant/
 │   │   ├── enums.py         # Shared enums
 │   │   └── routers/
 │   │       ├── sets.py
+│   │       ├── quickplay.py
 │   │       └── expeditions.py
 │   ├── ingestion/
-│   │   └── seed.py          # Wiki API ingestion script
+│   │   ├── seed.py          # Wiki API ingestion script
+│   │   └── cache/           # Cached card JSON files
+│   ├── tests/               # pytest test suite
 │   ├── alembic/             # Database migrations
 │   ├── Dockerfile
 │   └── requirements.txt
+├── frontend/
+│   ├── src/
+│   │   ├── pages/           # Home, Quickplay, SetSelection, Expedition views
+│   │   ├── components/
+│   │   ├── api.ts           # API client
+│   │   └── types.ts         # TypeScript interfaces
+│   ├── Dockerfile
+│   └── package.json
+├── .github/workflows/
+│   ├── ci.yml               # Run tests on push/PR to develop or main
+│   └── deploy.yml           # Deploy to EC2 on push to main
 ├── docker-compose.yml
 ├── .env.example
 └── reseed.sh
@@ -139,6 +161,5 @@ AeonsEndAssistant/
 
 ## Notes
 
-- Card data is scraped once at setup and cached locally during development. The wiki is not queried at runtime.
 - Treasures are not handled by this application.
 - Legacy content filtering and Outcasts mode support are planned for a future version.
