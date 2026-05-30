@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
-import { getExpeditions } from "../api"
+import { getExpeditions, getUserSets } from "../api"
 import { useNavigate } from "react-router-dom"
 import Button from "../components/Button"
-import type { Expedition } from "../types"
+import type { UserSet, Expedition } from "../types"
 
 function ExpeditionMode() {
     const navigate = useNavigate()
@@ -12,7 +12,22 @@ function ExpeditionMode() {
         queryFn: getExpeditions
     })
 
+    const {data: userSets} = useQuery<UserSet[]>({
+        queryKey: ['userSets'],
+        queryFn: getUserSets
+    })
+
     const activeExpeditions = expeditions?.filter((e: Expedition) => e.status === 'active') ?? []
+
+    if (userSets?.length === 0) {
+        return (
+            <div className="min-h-screen bg-gray-900 text-white p-8">
+                <h1 className="text-3xl font-bold mb-8">Quickplay</h1>
+                <p className="mb-4">No sets saved. Please select your sets before playing.</p>
+                <Button onClick={() => navigate('/sets')}>Manage Sets</Button>
+            </div>
+        )
+    }
 
     return (
         <div className="min-h-screen bg-gray-900 text-white p-8">

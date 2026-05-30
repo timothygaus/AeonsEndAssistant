@@ -1,11 +1,18 @@
 import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
-import { getQuickplay } from "../api"
-import type { BreachMage, PlayerCard, QuickplayResponse } from "../types"
+import { getQuickplay, getUserSets } from "../api"
+import type { UserSet, BreachMage, PlayerCard, QuickplayResponse } from "../types"
 import Button from "../components/Button"
+import { useNavigate } from "react-router-dom"
 
 function Quickplay() {
+    const navigate = useNavigate()
     const [numMages, setNumMages] = useState(2)
+
+    const { data: userSets } = useQuery<UserSet[]>({
+        queryKey: ['userSets'],
+        queryFn: getUserSets
+    })
 
     const { data, isLoading, refetch } = useQuery<QuickplayResponse>({
         queryKey: ['quickplay', numMages],
@@ -15,6 +22,16 @@ function Quickplay() {
 
     const handleRandomize = () => {
         refetch()
+    }
+
+    if (userSets?.length === 0) {
+        return (
+            <div className="min-h-screen bg-gray-900 text-white p-8">
+                <h1 className="text-3xl font-bold mb-8">Quickplay</h1>
+                <p className="mb-4">No sets saved. Please select your sets before playing.</p>
+                <Button onClick={() => navigate('/sets')}>Manage Sets</Button>
+            </div>
+        )
     }
 
     return (
