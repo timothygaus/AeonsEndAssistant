@@ -4,6 +4,7 @@ import { getQuickplay, getUserSets } from "../api"
 import type { UserSet, BreachMage, PlayerCard, QuickplayResponse } from "../types"
 import Button from "../components/Button"
 import { useNavigate } from "react-router-dom"
+import BackButton from "../components/BackButton"
 
 function Quickplay() {
     const navigate = useNavigate()
@@ -27,6 +28,7 @@ function Quickplay() {
     if (userSets?.length === 0) {
         return (
             <div className="min-h-screen bg-gray-900 text-white p-8">
+                <BackButton />
                 <h1 className="text-3xl font-bold mb-8">Quickplay</h1>
                 <p className="mb-4">No sets saved. Please select your sets before playing.</p>
                 <Button onClick={() => navigate('/sets')}>Manage Sets</Button>
@@ -36,6 +38,7 @@ function Quickplay() {
 
     return (
         <div className="min-h-screen bg-gray-900 text-white p-8">
+            <BackButton />
             <h1 className="text-3xl font-bold mb-8">Quickplay</h1>
 
             <div className="flex flex-col gap-4 max-w-sm">

@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query"
 import { getSets, getUserSets, updateUserSets } from "../api"
 import Button from "../components/Button"
 import type { SetBox, UserSet } from "../types"
+import BackButton from "../components/BackButton"
 
 function SetSelection() {
     const { data: allSets, isLoading: setsLoading } = useQuery<SetBox[]>({
@@ -33,6 +34,7 @@ function SetSelection() {
 
     return (
         <div className="min-h-screen bg-gray-900 text-white p-8">
+            <BackButton />
             <h1 className='text-3xl font-bold mb-6'>Select your Sets</h1>
 
             <div className='space-y-2'>
