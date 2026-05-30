@@ -1,11 +1,13 @@
 import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 import { getQuickplay } from "../api"
+import type { BreachMage, PlayerCard, QuickplayResponse } from "../types"
+import Button from "../components/Button"
 
 function Quickplay() {
     const [numMages, setNumMages] = useState(2)
 
-    const { data, isLoading, refetch } = useQuery({
+    const { data, isLoading, refetch } = useQuery<QuickplayResponse>({
         queryKey: ['quickplay', numMages],
         queryFn: () => getQuickplay(numMages),
         enabled: false
@@ -32,12 +34,7 @@ function Quickplay() {
                     />
                 </label>
 
-                <button
-                    onClick={handleRandomize}
-                    className="px-6 py-3 bg-blue-600 rounded text-lg font-semibold hover:bg-blue-700"
-                >
-                    Create Game
-                </button>
+                <Button onClick={handleRandomize}>Create Game</Button>
             </div>
 
             {isLoading && <p className="mt-8">Loading...</p>}
@@ -46,13 +43,13 @@ function Quickplay() {
                 <div className="mt-8">
                     <h2 className="text-2xl font-bold mb-4">Results</h2>
                     <h3 className="mt-4 mb-2 font-semibold">Mages:</h3>
-                    {data.mages.map((mage: any) => (<p key={mage.id}>{mage.name}</p>))}
+                    {data.mages.map((mage: BreachMage) => (<p key={mage.id}>{mage.name}</p>))}
                     <h3 className="mt-4 mb-2 font-semibold">Gems:</h3>
-                    {data.player_cards.filter((card: any) => card.type === 'gem').map((card: any) => (<p key={card.id}>{card.name}</p>))}
+                    {data.player_cards.filter((card: PlayerCard) => card.type === 'gem').map((card: PlayerCard) => (<p key={card.id}>{card.name}</p>))}
                     <h3 className="mt-4 mb-2 font-semibold">Relics:</h3>
-                    {data.player_cards.filter((card: any) => card.type === 'relic').map((card: any) => (<p key={card.id}>{card.name}</p>))}
+                    {data.player_cards.filter((card: PlayerCard) => card.type === 'relic').map((card: PlayerCard) => (<p key={card.id}>{card.name}</p>))}
                     <h3 className="mt-4 mb-2 font-semibold">Spells:</h3>
-                    {data.player_cards.filter((card: any) => card.type === 'spell').map((card: any) => (<p key={card.id}>{card.name}</p>))}
+                    {data.player_cards.filter((card: PlayerCard) => card.type === 'spell').map((card: PlayerCard) => (<p key={card.id}>{card.name}</p>))}
                     <h3 className="mt-4 mb-2 font-semibold">Nemesis:</h3>
                     <p>{data.nemesis.name}</p>
                 </div>

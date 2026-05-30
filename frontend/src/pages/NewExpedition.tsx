@@ -3,18 +3,19 @@ import { createExpedition, getUserSets } from "../api"
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import Button from "../components/Button"
+import type { CreateExpeditionRequest, Expedition, UserSet } from "../types"
 
 function NewExpedition() {
     const navigate = useNavigate()
     const [expeditionName, setExpeditionName] = useState<string | undefined>()
     const [variant, setVariant] = useState<string>('standard')
 
-    const {data: userSets} = useQuery({
+    const {data: userSets} = useQuery<UserSet[]>({
         queryKey: ['userSets'],
         queryFn: getUserSets
     })
 
-    const mutation = useMutation({
+    const mutation = useMutation<Expedition, Error, CreateExpeditionRequest>({
         mutationFn: createExpedition,
         onSuccess: (data) => {
             navigate(`/expedition/${data.id}`)
@@ -22,7 +23,7 @@ function NewExpedition() {
     })
 
     const handleCreateExpedition = () => {
-        const setIds = userSets?.map((userSet: any) => userSet.set_id) ?? []
+        const setIds = userSets?.map((userSet: UserSet) => userSet.set_id) ?? []
         mutation.mutate({set_ids: setIds, variant, name: expeditionName || undefined})
     }
 

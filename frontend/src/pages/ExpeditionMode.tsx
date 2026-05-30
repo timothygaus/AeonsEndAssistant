@@ -2,16 +2,17 @@ import { useQuery } from "@tanstack/react-query"
 import { getExpeditions } from "../api"
 import { useNavigate } from "react-router-dom"
 import Button from "../components/Button"
+import type { Expedition } from "../types"
 
 function ExpeditionMode() {
     const navigate = useNavigate()
 
-    const {data: expeditions} = useQuery({
+    const {data: expeditions} = useQuery<Expedition[]>({
         queryKey: ['expeditions'],
         queryFn: getExpeditions
     })
 
-    const activeExpeditions = expeditions?.filter((e: any) => e.status === 'active') ?? []
+    const activeExpeditions = expeditions?.filter((e: Expedition) => e.status === 'active') ?? []
 
     return (
         <div className="min-h-screen bg-gray-900 text-white p-8">
@@ -24,8 +25,8 @@ function ExpeditionMode() {
 
             {activeExpeditions.length > 0 && (
                 <div className="mt-8">
-                    <h2 className="text-x1 font-semibold mb-4">In Progress</h2>
-                    {activeExpeditions.map((expedition: any) => (
+                    <h2 className="text-xl font-semibold mb-4">In Progress</h2>
+                    {activeExpeditions.map((expedition: Expedition) => (
                         <div key={expedition.id} className="flex items-center justify-between mb-2">
                             <span>{expedition.name || `Expedition ${expedition.id}`}</span>
                             <Button onClick={() => navigate(`/expedition/${expedition.id}`)}>Resume</Button>
