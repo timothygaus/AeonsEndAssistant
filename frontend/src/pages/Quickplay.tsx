@@ -45,7 +45,7 @@ function Quickplay() {
                 <label className="flex flex-col gap-1">
                     Number of Mages
                     <input
-                        type="text"
+                        type="number"
                         min={1}
                         max={4}
                         value={numMages}
