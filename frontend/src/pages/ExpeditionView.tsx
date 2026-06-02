@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useParams } from "react-router-dom"
 import { getExpeditionById } from "../api"
 import type { BattleDetail, ExpeditionState } from "../types"
+import BackButton from "../components/BackButton"
 
 function ExpeditionView() {
     const { id } = useParams()
@@ -16,6 +17,7 @@ function ExpeditionView() {
 
     return (
         <div className="min-h-screen bg-gray-900 text-white p-8">
+            <BackButton />
             <h1 className="text-3xl font-bold mb-8">
                 {data?.expedition?.name || `Expedition ${id}`}
             </h1>

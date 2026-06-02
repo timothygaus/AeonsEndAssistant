@@ -41,19 +41,7 @@ function ExpeditionMode() {
                 <Button onClick={() => navigate('/expedition/resume')} disabled={activeExpeditions.length === 0}>Resume Expedition</Button>
             </div>
 
-            {activeExpeditions.length > 0 && (
-                <div className="mt-8">
-                    <h2 className="text-xl font-semibold mb-4">In Progress</h2>
-                    {activeExpeditions.map((expedition: Expedition) => (
-                        <div key={expedition.id} className="flex items-center justify-between mb-2">
-                            <span>{expedition.name || `Expedition ${expedition.id}`}</span>
-                            <Button onClick={() => navigate(`/expedition/${expedition.id}`)}>Resume</Button>
-                        </div>
-                    ))}
-                </div>
-            )}
         </div>
-
     )
 }
 

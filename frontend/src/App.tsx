@@ -6,6 +6,7 @@ import ExpeditionMode from "./pages/ExpeditionMode"
 import ExpeditionView from "./pages/ExpeditionView"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import NewExpedition from "./pages/NewExpedition"
+import ExpeditionResume from "./pages/ExpeditionResume"
 
 const queryClient = new QueryClient()
 
@@ -20,6 +21,7 @@ function App() {
           <Route path='/expedition' element={<ExpeditionMode />} />
           <Route path='/expedition/:id' element={<ExpeditionView />} />
           <Route path='/expedition/new' element={<NewExpedition />} />
+          <Route path='/expedition/resume' element={<ExpeditionResume />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>
