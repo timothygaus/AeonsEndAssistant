@@ -15,7 +15,9 @@ jobs:
                 username: ${{ secrets.EC2_USER }}
                 key: ${{ secrets.EC2_SSH_KEY }}
                 script: |
-                  cd AeonsEndAssistant
-                  git pull origin main
-                  docker compose down
-                  docker compose up -d --build
+                 cd AeonsEndAssistant
+                 docker system prune -a -f
+                 docker volume prune -f
+                 git pull origin main
+                 docker compose down
+                 docker compose up -d --build
