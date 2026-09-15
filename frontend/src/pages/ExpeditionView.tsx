@@ -3,14 +3,14 @@ import { useParams } from "react-router-dom"
 import { getExpeditionById } from "../api"
 import type { BattleDetail, ExpeditionState } from "../types"
 import BackButton from "../components/BackButton"
-import { useEffect, useState } from "react"
+import { useMemo, useState } from "react"
 import Button from "../components/Button"
+
+const SUPPLY_SIZE = 9
 
 function ExpeditionView() {
     const { id } = useParams()
     const [phase, setPhase] = useState<'selecting' | 'locked' | 'resolving-win' | 'resolving-loss' | 'complete'>('selecting')
-    const [selectedIds, setSelectedIds] = useState<number[]>([])
-    const [lossRandomizerType, setLossRandomizerType] = useState<string | null>(null)
 
     const { data } = useQuery<ExpeditionState>({
         queryKey: ['expedition-id', Number(id)],
@@ -18,16 +18,16 @@ function ExpeditionView() {
     })
 
     const currentBattle = data?.battles?.find((b: BattleDetail) => b.result === null)
-    const selectedPlayerCards = data?.barracks_cards.filter(card => selectedIds.includes(card.id)) ?? []
-    const notSelectedPlayerCards = data?.barracks_cards.filter(card => !selectedIds.includes(card.id)) ?? []
     const currentNemesis = currentBattle?.nemesis
 
-    useEffect(() => {
-        if (!data) return
-        setSelectedIds(data.barracks_cards.slice(0, 9).map(card => card.id))
-        setPhase('selecting')
-        setLossRandomizerType(null)
-    }, [data])
+    // The first SUPPLY_SIZE barracks cards are pre-selected as a starting point.
+    // A user edit replaces the default outright, so a refetch cannot clobber it.
+    const defaultSelectedIds = useMemo(
+        () => data?.barracks_cards.slice(0, SUPPLY_SIZE).map(card => card.id) ?? [],
+        [data]
+    )
+    const [selectedOverride, setSelectedOverride] = useState<number[] | null>(null)
+    const selectedIds = selectedOverride ?? defaultSelectedIds
 
     return (
         <div className="min-h-screen bg-gray-900 text-white p-8">
@@ -45,14 +45,14 @@ function ExpeditionView() {
                             type="checkbox"
                             checked={selectedIds.includes(card.id)}
                             onChange={() => {
-                                setSelectedIds(prev => 
-                                    prev.includes(card.id)
-                                        ? prev.filter(id => id !== card.id)
-                                        : [...prev, card.id]
+                                setSelectedOverride(
+                                    selectedIds.includes(card.id)
+                                        ? selectedIds.filter(id => id !== card.id)
+                                        : [...selectedIds, card.id]
                                 )
                             }}
                             disabled={
-                                (!selectedIds.includes(card.id) && selectedIds.length >= 9) ||
+                                (!selectedIds.includes(card.id) && selectedIds.length >= SUPPLY_SIZE) ||
                                 phase !== 'selecting'} 
                             />
                             {card.name} ({card.type})
@@ -60,7 +60,7 @@ function ExpeditionView() {
                 ))}
             </div>
             <div>
-                <Button onClick={() => setPhase('locked')} disabled={phase !== 'selecting' || selectedIds.length !== 9}>Lock Supply</Button>
+                <Button onClick={() => setPhase('locked')} disabled={phase !== 'selecting' || selectedIds.length !== SUPPLY_SIZE}>Lock Supply</Button>
             </div>
             <h1 className="text-2xl font-bold mb-1 mt-4">
                 Mages

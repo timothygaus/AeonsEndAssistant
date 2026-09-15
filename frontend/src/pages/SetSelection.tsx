@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useMemo } from "react"
 import { useQuery, useMutation } from "@tanstack/react-query"
 import { getSets, getUserSets, updateUserSets } from "../api"
 import Button from "../components/Button"
@@ -16,13 +16,14 @@ function SetSelection() {
         queryFn: getUserSets
     })
 
-    const [selectedIds, setSelectedIds] = useState<number[]>([])
-
-    useEffect(() => {
-        if (userSets) {
-            setSelectedIds(userSets.map((us: UserSet) => us.set_id))
-        }
-    }, [userSets])
+    // The saved sets are the starting point. A user edit replaces them outright,
+    // so a refetch cannot clobber an in-progress selection.
+    const savedIds = useMemo(
+        () => userSets?.map((us: UserSet) => us.set_id) ?? [],
+        [userSets]
+    )
+    const [selectedOverride, setSelectedOverride] = useState<number[] | null>(null)
+    const selectedIds = selectedOverride ?? savedIds
 
     const mutation = useMutation({
         mutationFn: updateUserSets
@@ -44,10 +45,10 @@ function SetSelection() {
                             type='checkbox'
                             checked={selectedIds.includes(set.id)}
                             onChange={() => {
-                                setSelectedIds(prev =>
-                                    prev.includes(set.id)
-                                        ? prev.filter(id => id !== set.id)
-                                        : [...prev, set.id]
+                                setSelectedOverride(
+                                    selectedIds.includes(set.id)
+                                        ? selectedIds.filter(id => id !== set.id)
+                                        : [...selectedIds, set.id]
                                 )
                             }}
                         />
