@@ -42,17 +42,25 @@ def test_data(session):
     session.add(test_set_2)
     session.flush()
 
-    # Valid options to choose from
-    for i in range(10):
+    # Valid options to choose from. Sized for the longest expedition the suite
+    # runs: extended with a base length of 5, which is 10 battles drawing two
+    # distinct nemeses from each of the 5 tiers.
+    for i in range(24):
         session.add(PlayerCard(name=f'Gem {i}', type=CardType.GEM.value, is_supply=True, set_id=test_set.id))
-    for i in range(8):
+    for i in range(24):
         session.add(PlayerCard(name=f'Relic {i}', type=CardType.RELIC.value, is_supply=True, set_id=test_set.id))
-    for i in range(10):
+    for i in range(24):
         session.add(PlayerCard(name=f'Spell {i}', type=CardType.SPELL.value, is_supply=True, set_id=test_set.id))
-    for i in range(8):
+    for i in range(16):
         session.add(BreachMage(name=f'Mage {i}', set_id=test_set.id))
-    for tier in range(1, 5):
-        session.add(Nemesis(name=f'Nemesis Tier {tier}', set_id=test_set.id, expedition_battle=tier, difficulty=tier))
+    for tier in range(1, 6):
+        for copy in range(2):
+            session.add(Nemesis(
+                name=f'Nemesis Tier {tier}.{copy}',
+                set_id=test_set.id,
+                expedition_battle=tier,
+                difficulty=tier,
+            ))
 
     # Invalid options, these should not be chosen
     for i in range(5):
@@ -63,7 +71,7 @@ def test_data(session):
         session.add(PlayerCard(name=f'Bad Spell {i}', type=CardType.SPELL.value, is_supply=True, set_id=test_set_2.id))
     for i in range(6):
         session.add(BreachMage(name=f'Bad Mage {i}', set_id=test_set_2.id))
-    for tier in range(1, 5):
+    for tier in range(1, 6):
         session.add(Nemesis(name=f'Bad Nemesis Tier {tier}', set_id=test_set_2.id, expedition_battle=tier, difficulty=tier))
     
     session.flush()

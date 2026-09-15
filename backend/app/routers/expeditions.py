@@ -1,17 +1,49 @@
-import math
 import random
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import delete, select, Session, update
+from sqlmodel import col, delete, select, Session, update
 
 from app.database import get_session
-from app.enums import BattleResult, CardType, ExpeditionStatus, ExpeditionVariant, LossRandomizerType, SupplyCardStatus
-from app.models import BreachMage, Expedition, ExpeditionBattle, ExpeditionMage, ExpeditionPlayerCard, ExpeditionSet, Nemesis, PlayerCard
-from app.schemas import BattleDetail, ExpeditionCreate, ExpeditionStateResponse, ResolveBattleRequest
+from app.enums import (
+    BattleResult,
+    CardType,
+    ExpeditionStatus,
+    ExpeditionVariant,
+    LossRandomizerType,
+    SupplyCardStatus,
+)
+from app.models import (
+    BreachMage,
+    Expedition,
+    ExpeditionBattle,
+    ExpeditionBattleCard,
+    ExpeditionBattleMage,
+    ExpeditionMage,
+    ExpeditionPlayerCard,
+    ExpeditionSet,
+    Nemesis,
+    PlayerCard,
+)
+from app.rules import (
+    MAX_MAGES,
+    MIN_MAGES,
+    STARTING_MAGES,
+    STARTING_SUPPLY,
+    SUPPLY_SIZE,
+    effective_length,
+    first_battle_number,
+    nemesis_tier,
+    required_nemesis_tiers,
+)
+from app.schemas import (
+    BattleDetail,
+    ExpeditionCreate,
+    ExpeditionStateResponse,
+    LockBattleRequest,
+    ResolveBattleRequest,
+)
 
 router = APIRouter()
-
-MAX_EXP_LEN = 4
 
 @router.get('/expeditions')
 def get_expeditions(session: Session = Depends(get_session)):
@@ -19,40 +51,42 @@ def get_expeditions(session: Session = Depends(get_session)):
 
 @router.post('/expeditions')
 def create_expedition(data: ExpeditionCreate, session: Session = Depends(get_session)):
-    start_battle = 2 if data.variant == ExpeditionVariant.SHORT else 1    
-    expedition = Expedition(name=data.name, variant=data.variant, current_battle=start_battle)
+    if not data.set_ids:
+        raise HTTPException(status_code=400, detail='At least one set must be selected')
+
+    # Checked up front: an expedition that cannot field a nemesis for its final
+    # battle would otherwise create cleanly and then dead-end hours later.
+    validate_nemesis_pools(session, data.variant, data.base_length, data.set_ids)
+
+    start_battle = first_battle_number(data.variant)
+    expedition = Expedition(
+        name=data.name,
+        variant=data.variant,
+        current_battle=start_battle,
+        base_length=data.base_length,
+        big_pockets=data.big_pockets,
+    )
     session.add(expedition)
     session.flush()
 
     for set_id in data.set_ids:
         session.add(ExpeditionSet(expedition_id=expedition.id, set_id=set_id))
 
-    # Seeding the initial supply cards
-    draw_supply(session, expedition.id, CardType.GEM, 3, data.set_ids)
-    draw_supply(session, expedition.id, CardType.RELIC, 2, data.set_ids)
-    draw_supply(session, expedition.id, CardType.SPELL, 4, data.set_ids)
+    for card_type, count in STARTING_SUPPLY.items():
+        draw_supply(session, expedition.id, CardType(card_type), count, data.set_ids)
 
     mage_pool = session.exec(
-        select(BreachMage).where(BreachMage.set_id.in_(data.set_ids))
+        select(BreachMage).where(col(BreachMage.set_id).in_(data.set_ids))
     ).all()
-    if len(mage_pool) < 4:
-        raise HTTPException(status_code=400, detail='Not enough mages in selected sets')
-    for mage in random.sample(mage_pool, 4):
+    if len(mage_pool) < STARTING_MAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f'Selected sets have {len(mage_pool)} mages, but {STARTING_MAGES} are needed to start'
+        )
+    for mage in random.sample(mage_pool, STARTING_MAGES):
         session.add(ExpeditionMage(expedition_id=expedition.id, mage_id=mage.id))
 
-    nemesis_pool = session.exec(
-        select(Nemesis).where(
-            Nemesis.expedition_battle == start_battle,
-            Nemesis.set_id.in_(data.set_ids)
-        )
-    ).all()
-    if not nemesis_pool:
-        raise HTTPException(status_code=400, detail='No nemesis available for this battle tier')
-    session.add(ExpeditionBattle(
-        expedition_id=expedition.id,
-        battle_number=start_battle,
-        nemesis_id=random.choice(nemesis_pool).id
-    ))
+    draw_next_battle(session, expedition, data.set_ids, start_battle)
 
     session.commit()
     session.refresh(expedition)
@@ -60,190 +94,382 @@ def create_expedition(data: ExpeditionCreate, session: Session = Depends(get_ses
 
 @router.get('/expeditions/active')
 def get_active_expeditions(session: Session = Depends(get_session)):
-    expeditions = session.exec(
-        select(Expedition).where(Expedition.status==ExpeditionStatus.ACTIVE)
+    return session.exec(
+        select(Expedition).where(Expedition.status == ExpeditionStatus.ACTIVE)
     ).all()
-    if not expeditions:
-        raise HTTPException(status_code=404, detail='No active expeditions found')
-    return expeditions
 
-@router.get('/expeditions/{expedition_id}')
+@router.get('/expeditions/{expedition_id}', response_model=ExpeditionStateResponse)
 def get_expedition_by_id(expedition_id: int, session: Session = Depends(get_session)):
+    return build_state(session, expedition_id)
+
+@router.post('/expeditions/{expedition_id}/lock-battle', response_model=ExpeditionStateResponse)
+def lock_battle(
+        expedition_id: int,
+        data: LockBattleRequest,
+        session: Session = Depends(get_session)):
+    '''
+    Commits the player's supply and mage choices for the pending battle. Barracks
+    cards left unselected are banished for the rest of the expedition, unless Big
+    Pockets is enabled, in which case they return to the barracks.
+    '''
     expedition = get_exp(session, expedition_id)
-    
-    expedition_player_cards = session.exec(select(ExpeditionPlayerCard).where(ExpeditionPlayerCard.expedition_id==expedition_id)).all()
-    barracks_ids = [card.player_card_id for card in expedition_player_cards if card.status == SupplyCardStatus.BARRACKS]
-    banished_ids = [card.player_card_id for card in expedition_player_cards if card.status == SupplyCardStatus.BANISHED]
+    if expedition.status == ExpeditionStatus.COMPLETE:
+        raise HTTPException(status_code=400, detail='This expedition is already complete')
 
-    barracks_cards = session.exec(select(PlayerCard).where(PlayerCard.id.in_(barracks_ids))).all()
-    banished_cards = session.exec(select(PlayerCard).where(PlayerCard.id.in_(banished_ids))).all()
+    battle = get_pending_battle(session, expedition_id)
+    if battle.locked:
+        raise HTTPException(status_code=400, detail='This battle has already been locked in')
 
-    expedition_mages = session.exec(select(ExpeditionMage).where(ExpeditionMage.expedition_id==expedition_id)).all()
-    mage_ids = [mage.mage_id for mage in expedition_mages]
-    mages = session.exec(select(BreachMage).where(BreachMage.id.in_(mage_ids))).all()
-    
-    expedition_battles = session.exec(select(ExpeditionBattle).where(ExpeditionBattle.expedition_id==expedition_id)).all()
-    battle_details = []
-    for battle in expedition_battles:
-        nemesis = session.exec(select(Nemesis).where(Nemesis.id == battle.nemesis_id)).first()
-        battle_details.append(BattleDetail(
-            battle_number=battle.battle_number,
-            result=battle.result,
-            nemesis=nemesis
-        ))
-
-    return ExpeditionStateResponse(
-        expedition=expedition,
-        barracks_cards=barracks_cards,
-        banished_cards=banished_cards,
-        mages=mages,
-        battles=battle_details
+    mage_ids = validate_selection(
+        data.mage_ids,
+        available=set(session.exec(
+            select(ExpeditionMage.mage_id).where(ExpeditionMage.expedition_id == expedition_id)
+        ).all()),
+        label='mage',
+        minimum=MIN_MAGES,
+        maximum=MAX_MAGES,
+    )
+    barracks_card_ids = set(session.exec(
+        select(ExpeditionPlayerCard.player_card_id).where(
+            ExpeditionPlayerCard.expedition_id == expedition_id,
+            ExpeditionPlayerCard.status == SupplyCardStatus.BARRACKS,
+        )
+    ).all())
+    supply_card_ids = validate_selection(
+        data.supply_card_ids,
+        available=barracks_card_ids,
+        label='supply card',
+        minimum=SUPPLY_SIZE,
+        maximum=SUPPLY_SIZE,
     )
 
+    for mage_id in mage_ids:
+        session.add(ExpeditionBattleMage(battle_id=battle.id, mage_id=mage_id))
+    for card_id in supply_card_ids:
+        session.add(ExpeditionBattleCard(battle_id=battle.id, player_card_id=card_id))
+
+    if not expedition.big_pockets:
+        banished = barracks_card_ids - supply_card_ids
+        if banished:
+            session.exec(
+                update(ExpeditionPlayerCard)
+                .where(ExpeditionPlayerCard.expedition_id == expedition_id)
+                .where(col(ExpeditionPlayerCard.player_card_id).in_(banished))
+                .values(status=SupplyCardStatus.BANISHED)
+            )
+
+    battle.locked = True
+    session.add(battle)
+    session.commit()
+    return build_state(session, expedition_id)
+
 @router.post('/expeditions/{expedition_id}/resolve-battle')
-def resolve_battle(expedition_id: int, data: ResolveBattleRequest, session: Session = Depends(get_session)):
+def resolve_battle(
+        expedition_id: int,
+        data: ResolveBattleRequest,
+        session: Session = Depends(get_session)):
     expedition = get_exp(session, expedition_id)
-    expedition_battle = session.exec(
-        select(ExpeditionBattle).where(
-            ExpeditionBattle.expedition_id == expedition_id,
-            ExpeditionBattle.battle_number == expedition.current_battle
+    if expedition.status == ExpeditionStatus.COMPLETE:
+        raise HTTPException(status_code=400, detail='This expedition is already complete')
+
+    battle = get_pending_battle(session, expedition_id)
+    if not battle.locked:
+        raise HTTPException(
+            status_code=400,
+            detail='The supply and mages must be locked in before recording a result'
         )
-    ).first()
-    expedition_sets = session.exec(select(ExpeditionSet).where(ExpeditionSet.expedition_id == expedition_id)).all()
-    set_ids = [exp_set.set_id for exp_set in expedition_sets]
+    if not data.won_battle and data.loss_randomizer_type is None:
+        raise HTTPException(
+            status_code=400,
+            detail='A randomizer type must be chosen when a battle is lost'
+        )
+
+    variant = ExpeditionVariant(expedition.variant)
+    set_ids = [
+        exp_set.set_id for exp_set in session.exec(
+            select(ExpeditionSet).where(ExpeditionSet.expedition_id == expedition_id)
+        ).all()
+    ]
 
     if data.won_battle:
-        expedition_battle.result = BattleResult.WIN
-        if (expedition_battle.battle_number == MAX_EXP_LEN and not expedition.variant == ExpeditionVariant.EXTENDED
-            or expedition_battle.battle_number == MAX_EXP_LEN*2):
+        battle.result = BattleResult.WIN
+        session.add(battle)
+
+        if battle.battle_number >= effective_length(variant, expedition.base_length):
             expedition.status = ExpeditionStatus.COMPLETE
             session.add(expedition)
-            session.add(expedition_battle)
             session.commit()
             session.refresh(expedition)
             return expedition
-        
-        session.add(expedition_battle)
 
-        expedition.current_battle += 1
+        expedition.current_battle = battle.battle_number + 1
+        for card_type in (CardType.GEM, CardType.RELIC, CardType.SPELL):
+            draw_supply(session, expedition_id, card_type, 1, set_ids)
+        draw_next_battle(session, expedition, set_ids, expedition.current_battle)
+    else:
+        battle.result = BattleResult.LOSS
+        session.add(battle)
 
-        draw_supply(session, expedition_id, CardType.GEM, 1, set_ids)
-        draw_supply(session, expedition_id, CardType.RELIC, 1, set_ids)
-        draw_supply(session, expedition_id, CardType.SPELL, 1, set_ids)
-
-        fought_nemeses = session.exec(select(ExpeditionBattle).where(ExpeditionBattle.expedition_id == expedition_id)).all()
-        fought_nemesis_ids = [nem.nemesis_id for nem in fought_nemeses]
-        nemesis_battle_num = math.ceil(expedition.current_battle/2) if expedition.variant == ExpeditionVariant.EXTENDED else expedition.current_battle
-
-        nemesis_pool = session.exec(
-            select(Nemesis).where(
-                Nemesis.expedition_battle == nemesis_battle_num,
-                Nemesis.set_id.in_(set_ids),
-                Nemesis.id.not_in(fought_nemesis_ids)
+        if data.loss_randomizer_type == LossRandomizerType.MAGE:
+            draw_mage(session, expedition_id, set_ids)
+        elif data.loss_randomizer_type != LossRandomizerType.TREASURE:
+            # Treasures are out of scope for this app; the player takes one at
+            # the table and the barracks is left untouched.
+            draw_supply(
+                session, expedition_id, CardType(data.loss_randomizer_type.value), 1, set_ids
             )
-        ).all()
-        if not nemesis_pool:
-            raise HTTPException(status_code=400, detail='No nemesis available for this battle tier')
-        nemesis_ids = [nemesis.id for nemesis in nemesis_pool]
 
+        # The fight repeats against the same nemesis, following the start-of-fight
+        # rules again, so a fresh unlocked attempt is opened.
         session.add(ExpeditionBattle(
             expedition_id=expedition_id,
-            battle_number=expedition.current_battle,
-            nemesis_id=random.choice(nemesis_ids)
+            battle_number=battle.battle_number,
+            attempt=battle.attempt + 1,
+            nemesis_id=battle.nemesis_id,
         ))
-    # Battle lost
-    else:
-        expedition_battle.result = BattleResult.LOSS
-        session.add(expedition_battle)
-        if data.loss_randomizer_type is not LossRandomizerType.TREASURE:
-            if data.loss_randomizer_type is LossRandomizerType.MAGE:
-                expedition_mages = session.exec(select(ExpeditionMage).where(ExpeditionMage.expedition_id == expedition_id)).all()
-                expedition_mage_ids = [mage.mage_id for mage in expedition_mages]
-                mage_pool = session.exec(
-                    select(BreachMage).where(
-                        BreachMage.id.not_in(expedition_mage_ids),
-                        BreachMage.set_id.in_(set_ids)
-                    )
-                ).all()
-                if not mage_pool:
-                    raise HTTPException(status_code=400, detail="No unused mages found for this expedition's sets")
-                random_mage = random.choice(mage_pool)
-                session.add(ExpeditionMage(
-                    expedition_id=expedition_id,
-                    mage_id=random_mage.id
-                ))
-            else:
-                draw_supply(session, expedition_id, CardType(data.loss_randomizer_type.value), 1, set_ids)
 
     session.add(expedition)
     session.commit()
     session.refresh(expedition)
     return expedition
 
-@router.post('/expeditions/{expedition_id}/lock-supply')
-def lock_supply(expedition_id: int, data: list[int], session: Session = Depends(get_session)):
-    expedition = get_exp(session, expedition_id)
-    # Nothing gets banished when playing with the big pockets variant
-    if expedition.variant == ExpeditionVariant.BIG_POCKETS:
-        return expedition
+@router.delete('/expeditions/{expedition_id}', status_code=204)
+def delete_expedition(expedition_id: int, session: Session = Depends(get_session)):
+    get_exp(session, expedition_id)
 
-    barracks_cards = session.exec(
-        select(ExpeditionPlayerCard).where(
-            ExpeditionPlayerCard.expedition_id==expedition_id,
-            ExpeditionPlayerCard.status==SupplyCardStatus.BARRACKS
-        )
+    battle_ids = session.exec(
+        select(ExpeditionBattle.id).where(ExpeditionBattle.expedition_id == expedition_id)
     ).all()
-    if len(barracks_cards) <= 9:
-        return expedition
+    if battle_ids:
+        session.exec(
+            delete(ExpeditionBattleMage).where(col(ExpeditionBattleMage.battle_id).in_(battle_ids))
+        )
+        session.exec(
+            delete(ExpeditionBattleCard).where(col(ExpeditionBattleCard.battle_id).in_(battle_ids))
+        )
+    session.exec(delete(ExpeditionBattle).where(ExpeditionBattle.expedition_id == expedition_id))
+    session.exec(delete(ExpeditionMage).where(ExpeditionMage.expedition_id == expedition_id))
+    session.exec(delete(ExpeditionPlayerCard).where(ExpeditionPlayerCard.expedition_id == expedition_id))
+    session.exec(delete(ExpeditionSet).where(ExpeditionSet.expedition_id == expedition_id))
+    session.exec(delete(Expedition).where(Expedition.id == expedition_id))
+    session.commit()
 
-    session.exec(
-        update(ExpeditionPlayerCard)
-        .where(ExpeditionPlayerCard.expedition_id==expedition_id)
-        .where(ExpeditionPlayerCard.player_card_id.in_(data))
-        .values(status=SupplyCardStatus.BANISHED)
+def build_state(session: Session, expedition_id: int) -> ExpeditionStateResponse:
+    expedition = get_exp(session, expedition_id)
+
+    expedition_player_cards = session.exec(
+        select(ExpeditionPlayerCard).where(ExpeditionPlayerCard.expedition_id == expedition_id)
+    ).all()
+    barracks_ids = [
+        c.player_card_id for c in expedition_player_cards
+        if c.status == SupplyCardStatus.BARRACKS
+    ]
+    banished_ids = [
+        c.player_card_id for c in expedition_player_cards
+        if c.status == SupplyCardStatus.BANISHED
+    ]
+
+    mage_ids = session.exec(
+        select(ExpeditionMage.mage_id).where(ExpeditionMage.expedition_id == expedition_id)
+    ).all()
+
+    battles = session.exec(
+        select(ExpeditionBattle)
+        .where(ExpeditionBattle.expedition_id == expedition_id)
+        .order_by(col(ExpeditionBattle.battle_number), col(ExpeditionBattle.attempt))
+    ).all()
+
+    battle_details = []
+    for battle in battles:
+        battle_mage_ids = session.exec(
+            select(ExpeditionBattleMage.mage_id).where(ExpeditionBattleMage.battle_id == battle.id)
+        ).all()
+        battle_card_ids = session.exec(
+            select(ExpeditionBattleCard.player_card_id).where(
+                ExpeditionBattleCard.battle_id == battle.id
+            )
+        ).all()
+        battle_details.append(BattleDetail(
+            battle_number=battle.battle_number,
+            attempt=battle.attempt,
+            result=battle.result,
+            locked=battle.locked,
+            nemesis=session.get(Nemesis, battle.nemesis_id),
+            mages=fetch_by_ids(session, BreachMage, battle_mage_ids),
+            supply_cards=fetch_by_ids(session, PlayerCard, battle_card_ids),
+        ))
+
+    return ExpeditionStateResponse(
+        expedition=expedition,
+        total_battles=effective_length(
+            ExpeditionVariant(expedition.variant), expedition.base_length
+        ),
+        barracks_cards=fetch_by_ids(session, PlayerCard, barracks_ids),
+        banished_cards=fetch_by_ids(session, PlayerCard, banished_ids),
+        mages=fetch_by_ids(session, BreachMage, mage_ids),
+        battles=battle_details,
     )
 
-    session.commit()
-    session.refresh(expedition)
-    return expedition
+def validate_selection(
+        selected: list[int],
+        available: set[int],
+        label: str,
+        minimum: int,
+        maximum: int) -> set[int]:
+    '''
+    Checks a client-supplied list of ids against what the barracks actually holds
+    and returns it as a set. Rejects duplicates, out-of-range counts and anything
+    the expedition does not own.
+    '''
+    unique = set(selected)
+    if len(unique) != len(selected):
+        raise HTTPException(status_code=400, detail=f'Duplicate {label} ids were submitted')
 
-@router.delete('/expeditions/{expedition_id}')
-def delete_expedition(expedition_id: int, session: Session = Depends(get_session)):
-    session.exec(delete(ExpeditionBattle).where(ExpeditionBattle.expedition_id==expedition_id))
-    session.exec(delete(ExpeditionMage).where(ExpeditionMage.expedition_id==expedition_id))
-    session.exec(delete(ExpeditionPlayerCard).where(ExpeditionPlayerCard.expedition_id==expedition_id))
-    session.exec(delete(ExpeditionSet).where(ExpeditionSet.expedition_id==expedition_id))
-    session.exec(delete(Expedition).where(Expedition.id==expedition_id))
-    session.commit()
+    if minimum == maximum and len(unique) != minimum:
+        raise HTTPException(
+            status_code=400,
+            detail=f'Exactly {minimum} {label}s must be chosen, got {len(unique)}'
+        )
+    if not minimum <= len(unique) <= maximum:
+        raise HTTPException(
+            status_code=400,
+            detail=f'Between {minimum} and {maximum} {label}s must be chosen, got {len(unique)}'
+        )
+
+    unavailable = unique - available
+    if unavailable:
+        raise HTTPException(
+            status_code=400,
+            detail=f'{label.capitalize()}s {sorted(unavailable)} are not in this expedition\'s barracks'
+        )
+    return unique
+
+def validate_nemesis_pools(
+        session: Session,
+        variant: ExpeditionVariant,
+        base_length: int,
+        set_ids: list[int]) -> None:
+    for tier, needed in required_nemesis_tiers(variant, base_length).items():
+        available = session.exec(
+            select(Nemesis).where(
+                Nemesis.expedition_battle == tier,
+                col(Nemesis.set_id).in_(set_ids),
+            )
+        ).all()
+        if len(available) < needed:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f'Selected sets have {len(available)} nemeses for battle tier {tier}, '
+                    f'but this expedition needs {needed}'
+                )
+            )
+
+def draw_next_battle(
+        session: Session,
+        expedition: Expedition,
+        set_ids: list[int],
+        battle_number: int) -> ExpeditionBattle:
+    fought_nemesis_ids = session.exec(
+        select(ExpeditionBattle.nemesis_id).where(
+            ExpeditionBattle.expedition_id == expedition.id
+        )
+    ).all()
+    tier = nemesis_tier(ExpeditionVariant(expedition.variant), battle_number)
+
+    pool = session.exec(
+        select(Nemesis).where(
+            Nemesis.expedition_battle == tier,
+            col(Nemesis.set_id).in_(set_ids),
+            col(Nemesis.id).not_in(fought_nemesis_ids),
+        )
+    ).all()
+    if not pool:
+        raise HTTPException(
+            status_code=400,
+            detail=f'No unfought nemesis available for battle tier {tier}'
+        )
+
+    battle = ExpeditionBattle(
+        expedition_id=expedition.id,
+        battle_number=battle_number,
+        nemesis_id=random.choice(pool).id,
+    )
+    session.add(battle)
+    return battle
+
+def draw_mage(session: Session, expedition_id: int, set_ids: list[int]) -> None:
+    expedition_mage_ids = session.exec(
+        select(ExpeditionMage.mage_id).where(ExpeditionMage.expedition_id == expedition_id)
+    ).all()
+    pool = session.exec(
+        select(BreachMage).where(
+            col(BreachMage.id).not_in(expedition_mage_ids),
+            col(BreachMage.set_id).in_(set_ids),
+        )
+    ).all()
+    if not pool:
+        raise HTTPException(
+            status_code=400,
+            detail="No unused mages found for this expedition's sets"
+        )
+    session.add(ExpeditionMage(expedition_id=expedition_id, mage_id=random.choice(pool).id))
 
 def draw_supply(
         session: Session,
         expedition_id: int,
         card_type: CardType,
         count: int,
-        set_ids: list[int]):
-    
-    used_cards = session.exec(select(ExpeditionPlayerCard).where(ExpeditionPlayerCard.expedition_id == expedition_id)).all()
-    used_card_ids = [card.player_card_id for card in used_cards]
+        set_ids: list[int]) -> None:
+    used_card_ids = session.exec(
+        select(ExpeditionPlayerCard.player_card_id).where(
+            ExpeditionPlayerCard.expedition_id == expedition_id
+        )
+    ).all()
 
     pool = session.exec(
         select(PlayerCard).where(
             PlayerCard.type == card_type,
-            PlayerCard.is_supply == True,
-            PlayerCard.set_id.in_(set_ids),
-            PlayerCard.id.not_in(used_card_ids),
+            PlayerCard.is_supply == True,  # noqa: E712 - SQL comparison, not a bool check
+            col(PlayerCard.set_id).in_(set_ids),
+            col(PlayerCard.id).not_in(used_card_ids),
         )
     ).all()
 
     if len(pool) < count:
-        raise HTTPException(status_code=400, detail=f'Not enough {card_type}s in selected sets')
-    
+        raise HTTPException(
+            status_code=400,
+            detail=f'Not enough undrawn {card_type.value}s in the selected sets'
+        )
+
     for card in random.sample(pool, count):
         session.add(ExpeditionPlayerCard(
             expedition_id=expedition_id,
             player_card_id=card.id,
-            status=SupplyCardStatus.BARRACKS
+            status=SupplyCardStatus.BARRACKS,
         ))
+
+def fetch_by_ids(session: Session, model, ids) -> list:
+    '''Fetches rows by id, preserving nothing in particular about order.'''
+    ids = list(ids)
+    if not ids:
+        return []
+    return list(session.exec(select(model).where(col(model.id).in_(ids))).all())
+
+def get_pending_battle(session: Session, expedition_id: int) -> ExpeditionBattle:
+    '''The attempt awaiting a result. Exactly one exists on an active expedition.'''
+    battle = session.exec(
+        select(ExpeditionBattle).where(
+            ExpeditionBattle.expedition_id == expedition_id,
+            col(ExpeditionBattle.result).is_(None),
+        )
+    ).first()
+    if not battle:
+        raise HTTPException(
+            status_code=409,
+            detail='This expedition has no battle awaiting a result'
+        )
+    return battle
 
 def get_exp(session: Session, id: int) -> Expedition:
     expedition = session.exec(select(Expedition).where(Expedition.id == id)).first()

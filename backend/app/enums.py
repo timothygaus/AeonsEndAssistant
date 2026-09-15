@@ -20,7 +20,6 @@ class ExpeditionVariant(str, Enum):
     STANDARD = 'standard'
     SHORT = 'short'
     EXTENDED = 'extended'
-    BIG_POCKETS = 'big-pockets'
 
 class ExpeditionStatus(str, Enum):
     ACTIVE = 'active'

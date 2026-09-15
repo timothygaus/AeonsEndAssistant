@@ -1,296 +1,182 @@
 from fastapi.testclient import TestClient
-from sqlmodel import Session, select
 
-from app.models import ExpeditionBattle, ExpeditionMage, Nemesis
-from app.enums import BattleResult, CardType, ExpeditionStatus, ExpeditionVariant, LossRandomizerType
+from app.enums import BattleResult, ExpeditionStatus, ExpeditionVariant, LossRandomizerType
+from app.rules import STARTING_MAGES, SUPPLY_SIZE
+from tests.helpers import (
+    barracks_by_type,
+    create_expedition,
+    get_state,
+    lock_battle,
+    pending_battle,
+    play_battle,
+    resolve,
+)
 
 def test_create_expedition(client: TestClient, test_data):
     '''
-    Test that POST /expeditions returns 200, the correct number of cards and mages were drawn,
-    the initial battle was created correctly, and all drawn options belong to the correct set
+    A new expedition draws its starting barracks, four mages and a first battle,
+    all from the selected sets.
     '''
-    data = create_expedition(client, test_data)
+    expedition = create_expedition(client, test_data)
+    state = get_state(client, expedition['id'])
+    cards = barracks_by_type(state)
 
-    state_response = client.get(f'/expeditions/{data["id"]}')
-    assert state_response.status_code == 200
-    state = state_response.json()
+    assert len(cards['gem']) == 3
+    assert len(cards['relic']) == 2
+    assert len(cards['spell']) == 4
+    assert len(state['mages']) == STARTING_MAGES
+    assert state['total_battles'] == 4
 
-    gems, relics, spells = get_barracks_cards(state)
+    battle = pending_battle(state)
+    assert battle['battle_number'] == 1
+    assert battle['attempt'] == 1
+    assert battle['locked'] is False
+    assert battle['nemesis']['expedition_battle'] == 1
 
-    assert len(gems) == 3
-    assert len(relics) == 2
-    assert len(spells) == 4
-    assert len(state['mages']) == 4
-    assert len(state['battles']) == 1
-    assert state['battles'][0]['battle_number'] == 1
-    assert state['battles'][0]['result'] == None
     assert all(c['set_id'] == test_data['set_id'] for c in state['barracks_cards'])
     assert all(m['set_id'] == test_data['set_id'] for m in state['mages'])
-    assert state['battles'][0]['nemesis']['set_id'] == test_data['set_id']
+    assert battle['nemesis']['set_id'] == test_data['set_id']
 
-def test_resolve_battle_win(client: TestClient, session: Session, test_data):
+def test_resolve_battle_win(client: TestClient, test_data):
     '''
-    Test that the current ExpeditionBattle result is updated to win, the expedition's current battle
-    is incremented by 1, one gem, relic and spell are added to the barracks, and a new ExpeditionBattle
-    is created for the next fight with the correct battle number and a valid nemesis.
+    Winning records the result, advances the battle number, adds one card of each
+    type to the barracks and draws the next nemesis one tier up.
     '''
-    data = create_expedition(client, test_data)
-    current_battle_num = data['current_battle']
+    expedition = create_expedition(client, test_data)
+    before = barracks_by_type(get_state(client, expedition['id']))
 
-    data = resolve_battle_win(client, data['id'])
+    expedition = play_battle(client, expedition['id'], won=True)
+    state = get_state(client, expedition['id'])
+    after = barracks_by_type(state)
 
-    current_expedition_battle = session.exec(
-        select(ExpeditionBattle).where(
-            ExpeditionBattle.expedition_id==data['id'],
-            ExpeditionBattle.battle_number==current_battle_num
+    assert expedition['current_battle'] == 2
+    assert len(after['gem']) == len(before['gem']) + 1
+    assert len(after['relic']) == len(before['relic']) + 1
+    assert len(after['spell']) == len(before['spell']) + 1
+
+    fought = [b for b in state['battles'] if b['result'] is not None]
+    assert [b['result'] for b in fought] == [BattleResult.WIN.value]
+
+    battle = pending_battle(state)
+    assert battle['battle_number'] == 2
+    assert battle['attempt'] == 1
+    assert battle['locked'] is False
+    assert battle['nemesis']['expedition_battle'] == 2
+
+def test_loss_reopens_the_same_battle(client: TestClient, test_data):
+    '''
+    Losing must leave a pending attempt against the same nemesis. Without one the
+    expedition has no current battle and cannot be resumed.
+    '''
+    expedition = create_expedition(client, test_data)
+    lost_nemesis = pending_battle(get_state(client, expedition['id']))['nemesis']
+
+    expedition = play_battle(
+        client, expedition['id'], won=False, loss_randomizer_type=LossRandomizerType.GEM
+    )
+    state = get_state(client, expedition['id'])
+
+    assert expedition['current_battle'] == 1
+    battle = pending_battle(state)
+    assert battle is not None
+    assert battle['battle_number'] == 1
+    assert battle['attempt'] == 2
+    assert battle['locked'] is False
+    assert battle['nemesis']['id'] == lost_nemesis['id']
+
+def test_repeated_losses_record_each_attempt(client: TestClient, test_data):
+    '''Every loss is its own row, so the history shows all three attempts.'''
+    expedition = create_expedition(client, test_data)
+    for _ in range(2):
+        play_battle(
+            client, expedition['id'], won=False, loss_randomizer_type=LossRandomizerType.GEM
         )
-    ).first()
 
-    next_expedition_battle = session.exec(
-        select(ExpeditionBattle).where(
-            ExpeditionBattle.expedition_id==data['id'],
-            ExpeditionBattle.battle_number==data['current_battle']
-        )
-    ).first()
+    state = get_state(client, expedition['id'])
+    battle_one = [b for b in state['battles'] if b['battle_number'] == 1]
 
-    next_nemesis = session.exec(
-        select(Nemesis).where(
-            Nemesis.id==next_expedition_battle.nemesis_id
-        )
-    ).first()
+    assert [b['attempt'] for b in battle_one] == [1, 2, 3]
+    assert [b['result'] for b in battle_one] == ['loss', 'loss', None]
+    assert len({b['nemesis']['id'] for b in battle_one}) == 1
 
-    state_response = client.get(f'/expeditions/{data["id"]}')
-    assert state_response.status_code == 200
-    state = state_response.json()
+def test_loss_randomizer_adds_the_chosen_type(client: TestClient, test_data):
+    '''A treasure leaves the barracks alone; a mage or card adds to it.'''
+    expedition = create_expedition(client, test_data)
+    before = get_state(client, expedition['id'])
 
-    gems, relics, spells = get_barracks_cards(state)
+    play_battle(
+        client, expedition['id'], won=False, loss_randomizer_type=LossRandomizerType.TREASURE
+    )
+    after_treasure = get_state(client, expedition['id'])
+    assert len(after_treasure['barracks_cards']) == len(before['barracks_cards'])
+    assert len(after_treasure['mages']) == len(before['mages'])
 
-    assert current_expedition_battle.result == BattleResult.WIN
-    assert data['current_battle'] == current_battle_num + 1
-    assert next_expedition_battle.battle_number == current_battle_num + 1
-    assert len(gems) == 4
-    assert len(relics) == 3
-    assert len(spells) == 5
-    assert next_nemesis.expedition_battle == current_battle_num + 1
-    assert next_nemesis.set_id == test_data['set_id']
+    play_battle(
+        client, expedition['id'], won=False, loss_randomizer_type=LossRandomizerType.MAGE
+    )
+    after_mage = get_state(client, expedition['id'])
+    assert len(after_mage['mages']) == len(before['mages']) + 1
+    assert len(after_mage['barracks_cards']) == len(before['barracks_cards'])
 
-def test_resolve_battle_loss(client: TestClient, session: Session, test_data):
-    '''
-    Tests that after a loss the current expedition battle's result was updated to loss, the next battle num
-    remains the same, one randomizer was added (in this case, a gem) to the barracks and all other barracks contents
-    remain unchanged, and the next nemesis to be fought remains unchanged.
-    '''
-    data = create_expedition(client, test_data)
-    current_battle_num = data['current_battle']
+    play_battle(
+        client, expedition['id'], won=False, loss_randomizer_type=LossRandomizerType.SPELL
+    )
+    after_spell = get_state(client, expedition['id'])
+    assert len(barracks_by_type(after_spell)['spell']) == len(barracks_by_type(before)['spell']) + 1
 
-    state_response = client.get(f'/expeditions/{data["id"]}')
-    assert state_response.status_code == 200
-    state = state_response.json()
+def test_loss_requires_a_randomizer_choice(client: TestClient, test_data):
+    expedition = create_expedition(client, test_data)
+    lock_battle(client, expedition['id'])
 
-    cur_gems, cur_relics, cur_spells = get_barracks_cards(state)
-    cur_mages = get_barracks_mages(session, data['id'])
+    response = client.post(
+        f"/expeditions/{expedition['id']}/resolve-battle", json={'won_battle': False}
+    )
+    assert response.status_code == 400
+    assert 'randomizer' in response.json()['detail'].lower()
 
-    current_expedition_battle = session.exec(
-        select(ExpeditionBattle).where(
-            ExpeditionBattle.expedition_id==data['id'],
-            ExpeditionBattle.battle_number==current_battle_num
-        )
-    ).first()
-    cur_nemesis = session.exec(
-        select(Nemesis).where(
-            Nemesis.id==current_expedition_battle.nemesis_id
-        )
-    ).first()
+def test_expedition_completes_on_the_final_win(client: TestClient, test_data):
+    expedition = create_expedition(client, test_data)
+    for _ in range(4):
+        expedition = play_battle(client, expedition['id'], won=True)
 
-    response = client.post(f'/expeditions/{data["id"]}/resolve-battle', json={
-        'won_battle': False,
-        'loss_randomizer_type': LossRandomizerType.GEM.value
-    })
-    assert response.status_code == 200
-    data = response.json()
-    next_battle_num = data['current_battle']
+    assert expedition['status'] == ExpeditionStatus.COMPLETE.value
+    assert pending_battle(get_state(client, expedition['id'])) is None
 
-    next_expedition_battle = session.exec(
-        select(ExpeditionBattle).where(
-            ExpeditionBattle.expedition_id==data['id'],
-            ExpeditionBattle.battle_number==next_battle_num
-        )
-    ).first()
-    next_nemesis = session.exec(
-        select(Nemesis).where(
-            Nemesis.id==next_expedition_battle.nemesis_id
-        )
-    ).first()
+def test_resolving_a_complete_expedition_is_rejected(client: TestClient, test_data):
+    expedition = create_expedition(client, test_data)
+    for _ in range(4):
+        expedition = play_battle(client, expedition['id'], won=True)
 
-    state_response = client.get(f'/expeditions/{data["id"]}')
-    assert state_response.status_code == 200
-    state = state_response.json()
-
-    gems, relics, spells = get_barracks_cards(state)
-    mages = get_barracks_mages(session, data['id'])
-
-    assert next_expedition_battle.result == BattleResult.LOSS
-    assert next_battle_num == current_battle_num
-    assert len(gems) == len(cur_gems) + 1
-    assert len(relics) == len(cur_relics)
-    assert len(spells) == len(cur_spells)
-    assert len(mages) == len(cur_mages)
-    assert next_nemesis.id == cur_nemesis.id
-
-def test_resolve_battle_win_final(client: TestClient, test_data):
-    '''
-    Tests that when the final battle of an expedition is completed, the status of the expedition is updated to complete.
-    '''
-    data = create_expedition(client, test_data)
-
-    # 4 battles in a standard expedition
-    # TODO: Beyond the Breach makes this 5 if present, need to handle that case
-    data = resolve_battle_win(client, data['id'])
-    data = resolve_battle_win(client, data['id'])
-    data = resolve_battle_win(client, data['id'])
-    data = resolve_battle_win(client, data['id'])
-
-    assert data['status'] == ExpeditionStatus.COMPLETE.value
-
-def test_resolve_battle_loss_chose_treasure(client: TestClient, session: Session, test_data):
-    '''
-    Tests that no gems, relics, spells, or mages were added to the barracks after a loss if a treasure was chosen.
-    '''
-    data = create_expedition(client, test_data)
-
-    state_response = client.get(f'/expeditions/{data["id"]}')
-    assert state_response.status_code == 200
-    state = state_response.json()
-
-    cur_gems, cur_relics, cur_spells = get_barracks_cards(state)
-    cur_mages = get_barracks_mages(session, data['id'])
-
-    response = client.post(f'/expeditions/{data["id"]}/resolve-battle', json={
-        'won_battle': False,
-        'loss_randomizer_type': LossRandomizerType.TREASURE.value
-    })
-    assert response.status_code == 200
-    data = response.json()
-
-    state_response = client.get(f'/expeditions/{data["id"]}')
-    assert state_response.status_code == 200
-    state = state_response.json()
-
-    gems, relics, spells = get_barracks_cards(state)
-    mages = get_barracks_mages(session, data['id'])
-
-    assert len(gems) == len(cur_gems)
-    assert len(relics) == len(cur_relics)
-    assert len(spells) == len(cur_spells)
-    assert len(mages) == len(cur_mages)
-
-def test_resolve_battle_loss_chose_mage(client: TestClient, session: Session, test_data):
-    '''
-    Tests that a mage was added to the barracks after a loss if a mage randomizer was chosen.
-    '''
-    data = create_expedition(client, test_data)
-
-    state_response = client.get(f'/expeditions/{data["id"]}')
-    assert state_response.status_code == 200
-    state = state_response.json()
-
-    cur_gems, cur_relics, cur_spells = get_barracks_cards(state)
-    cur_mages = get_barracks_mages(session, data['id'])
-
-    response = client.post(f'/expeditions/{data["id"]}/resolve-battle', json={
-        'won_battle': False,
-        'loss_randomizer_type': LossRandomizerType.MAGE.value
-    })
-    assert response.status_code == 200
-    data = response.json()
-
-    state_response = client.get(f'/expeditions/{data["id"]}')
-    assert state_response.status_code == 200
-    state = state_response.json()
-
-    gems, relics, spells = get_barracks_cards(state)
-    mages = get_barracks_mages(session, data['id'])
-
-    assert len(gems) == len(cur_gems)
-    assert len(relics) == len(cur_relics)
-    assert len(spells) == len(cur_spells)
-    assert len(mages) == len(cur_mages) + 1
+    response = client.post(
+        f"/expeditions/{expedition['id']}/resolve-battle", json={'won_battle': True}
+    )
+    assert response.status_code == 400
+    assert 'complete' in response.json()['detail'].lower()
 
 def test_getting_nonexistent_expedition(client: TestClient):
-    '''
-    Tests that attempting to get an expedition that doesn't exists returns a 404 response.
-    '''
-    state_response = client.get(f'/expeditions/999')
-    assert state_response.status_code == 404
+    assert client.get('/expeditions/999').status_code == 404
 
-def test_draw_valid_cards(client: TestClient, test_data):
-    '''
-    Tests that cards are not drawn from sets not present in the expedition.
-    '''    
-    data = create_expedition(client, test_data)
+def test_drawn_cards_are_never_repeated(client: TestClient, test_data):
+    '''Banished cards stay out of the pool for the rest of the expedition.'''
+    expedition = create_expedition(client, test_data)
+    seen = set()
 
-    state_response = client.get(f'/expeditions/{data["id"]}')
-    assert state_response.status_code == 200
-    state = state_response.json()
+    for _ in range(3):
+        state = get_state(client, expedition['id'])
+        ids = {c['id'] for c in state['barracks_cards']} | {c['id'] for c in state['banished_cards']}
+        assert not (seen - ids), 'a previously drawn card disappeared from the expedition'
+        seen = ids
+        play_battle(client, expedition['id'], won=True)
+
+    final = get_state(client, expedition['id'])
+    all_ids = [c['id'] for c in final['barracks_cards'] + final['banished_cards']]
+    assert len(all_ids) == len(set(all_ids))
+
+def test_cards_are_only_drawn_from_expedition_sets(client: TestClient, test_data):
+    expedition = create_expedition(client, test_data)
+    play_battle(client, expedition['id'], won=True)
+    state = get_state(client, expedition['id'])
 
     assert all(c['set_id'] == test_data['set_id'] for c in state['barracks_cards'])
-
-def test_drawn_cards_not_repeated(client: TestClient, session: Session, test_data):
-    '''
-    Tests that new cards drawn are not already present in the list of barracks or banished cards.
-    '''
-    data = create_expedition(client, test_data)
-    state_response = client.get(f'/expeditions/{data["id"]}')
-    assert state_response.status_code == 200
-    state = state_response.json()
-    initial_ids = {c['id'] for c in state['barracks_cards']}
-
-    data = resolve_battle_win(client, data['id'])
-    state_response = client.get(f'/expeditions/{data["id"]}')
-    assert state_response.status_code == 200
-    state = state_response.json()
-    all_ids = {c['id'] for c in state['barracks_cards']}
-
-    assert len(all_ids) == len(initial_ids) + 3
-
-def create_expedition(client: TestClient, test_data):
-    '''
-    Calls POST /expeditions using the set_id of test_data and asserts a 200 response,
-    and returns the json response.
-    '''
-    response = client.post('/expeditions', json={
-        'set_ids': [test_data['set_id']],
-        'variant': ExpeditionVariant.STANDARD.value
-    })
-    assert response.status_code == 200
-    return response.json()
-
-def get_barracks_cards(state):
-    '''
-    Gets the gems, relics, and spells from the barracks from the GET /expeditions/{id} json response
-    '''
-    gems = [c for c in state['barracks_cards'] if c['type'] == CardType.GEM.value]
-    relics = [c for c in state['barracks_cards'] if c['type'] == CardType.RELIC.value]
-    spells = [c for c in state['barracks_cards'] if c['type'] == CardType.SPELL.value]
-    return gems, relics, spells
-
-def get_barracks_mages(session: Session, id):
-    '''
-    Gets the mages from the barracks from the GET /expeditions/{id} json response
-    '''
-    return session.exec(
-        select(ExpeditionMage).where(
-            ExpeditionMage.expedition_id==id,
-        )
-    ).all()
-
-def resolve_battle_win(client: TestClient, id):
-    '''
-    Calls POST /expeditions/{id}/resolve-battle with won_battle = True, asserts a 200 response,
-    and returns the json response.
-    '''
-    response = client.post(f'/expeditions/{id}/resolve-battle', json={
-        'won_battle': True
-    })
-    assert response.status_code == 200
-    return response.json()
+    assert all(c['set_id'] == test_data['set_id'] for c in state['banished_cards'])
+    assert all(m['set_id'] == test_data['set_id'] for m in state['mages'])
